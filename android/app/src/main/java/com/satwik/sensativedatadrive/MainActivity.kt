@@ -2,6 +2,7 @@ package com.satwik.sensativedatadrive
 
 import android.annotation.SuppressLint
 import android.os.Bundle
+import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebSettings
 import android.webkit.WebView
@@ -46,6 +47,13 @@ class MainActivity : AppCompatActivity() {
             }
         }
         webView.webChromeClient = WebChromeClient()
+
+        // The web app (pages.dev) talks to an API on another origin (workers.dev);
+        // its session cookie is cross-site, and WebView blocks third-party cookies
+        // by default — without this the app can never stay logged in.
+        val cookieManager = CookieManager.getInstance()
+        cookieManager.setAcceptCookie(true)
+        cookieManager.setAcceptThirdPartyCookies(webView, true)
 
         if (savedInstanceState == null) {
             webView.loadUrl(APP_URL)
