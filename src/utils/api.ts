@@ -28,17 +28,34 @@ api.interceptors.response.use(
 );
 
 // Helper to check if user is logged in (reads JS-accessible indicator cookie)
+// NOTE: the API lives on a different origin (workers.dev) than this app
+// (pages.dev), so cookies set by the API are NOT readable from JS here.
+// The indicator cookie must therefore be set on THIS origin by the client
+// itself on successful login/register (see below). The real session is the
+// httpOnly auth cookie, which the browser sends automatically.
 export function isLoggedIn(): boolean {
   return document.cookie.split(';').some(c => c.trim().startsWith('is_logged_in=1'));
+}
+
+// Set the JS-readable login indicator on THIS origin after a successful
+// login/register, so isLoggedIn() and the route guards work cross-origin.
+function setLoggedInIndicator(): void {
+  document.cookie = 'is_logged_in=1; Path=/; Max-Age=86400; SameSite=Lax; Secure';
 }
 
 // Auth endpoints
 export const auth = {
   register: (email: string, password: string) =>
-    api.post('/api/register', { email, password }),
+    api.post('/api/register', { email, password }).then((res) => {
+      if (res.data?.success) setLoggedInIndicator();
+      return res;
+    }),
 
   login: (email: string, password: string) =>
-    api.post('/api/login', { email, password }),
+    api.post('/api/login', { email, password }).then((res) => {
+      if (res.data?.success) setLoggedInIndicator();
+      return res;
+    }),
 
   logout: () => api.post('/api/logout').finally(() => {
     // Clear the JS-readable indicator cookie on the client side
