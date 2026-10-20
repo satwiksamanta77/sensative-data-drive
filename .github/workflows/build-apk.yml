@@ -38,9 +38,58 @@ jobs:
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
+  verify:
+    name: Verify APK and live endpoints
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download APK artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: sensitive-data-drive-apk
+          path: dist
+
+      - name: Verify APK package name (aapt2 badging)
+        run: |
+          set -euo pipefail
+          AAPT2=$(find "$ANDROID_HOME/build-tools" -name aapt2 -type f | sort -V | tail -n 1)
+          echo "Using aapt2: $AAPT2"
+          "$AAPT2" dump badging dist/app-debug.apk | tee badging.txt
+          grep -q "package: name='com.satwik.sensativedatadrive'" badging.txt
+          echo "Package name OK: com.satwik.sensativedatadrive"
+
+      - name: Verify APK embeds the production Pages URL
+        run: |
+          set -euo pipefail
+          found=0
+          for dex in $(unzip -Z1 dist/app-debug.apk 'classes*.dex'); do
+            if unzip -p dist/app-debug.apk "$dex" | grep -a -q "sensative-data-drive.pages.dev"; then
+              echo "Found Pages URL in $dex"
+              found=1
+              break
+            fi
+          done
+          test "$found" = "1"
+          echo "Embedded URL OK: https://sensative-data-drive.pages.dev"
+
+      - name: Smoke test live Pages site and Worker CORS
+        run: |
+          set -euo pipefail
+          code=$(curl -s -o /dev/null -w "%{http_code}" https://sensative-data-drive.pages.dev/)
+          echo "Pages / -> HTTP $code"
+          test "$code" = "200"
+          acao=$(curl -s -X OPTIONS https://crypto-vault-api.memonic.workers.dev/api/login \
+            -H "Origin: https://sensative-data-drive.pages.dev" \
+            -H "Access-Control-Request-Method: POST" \
+            -H "Access-Control-Request-Headers: content-type" \
+            -D - -o /dev/null | grep -i '^Access-Control-Allow-Origin:' | tr -d '\r' | awk '{print $2}')
+          echo "Preflight Access-Control-Allow-Origin: $acao"
+          test "$acao" = "https://sensative-data-drive.pages.dev"
+          echo "Live smoke tests OK"
+
   release:
     name: Publish release with APK
-    needs: build
+    needs: [build, verify]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
@@ -54,11 +103,12 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/app-debug.apk
-          name: Sensitive Data Drive v${{ github.ref_name }}
+          name: Sensitive Data Drive ${{ github.ref_name }}
           body: |
             Sensitive Data Drive Android app (${{ github.ref_name }}).
 
             - WebView wrapper for https://sensative-data-drive.pages.dev/
+            - Verified in CI: package name, embedded production URL, live Pages + CORS smoke tests.
             - Debug-signed APK: installable on any device (signed with the standard Android debug key).
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
